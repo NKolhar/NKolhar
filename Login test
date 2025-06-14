@@ -1,25 +1,26 @@
 import paramiko
 import getpass
-from colorama import Fore, Style, init
 
-# Initialize colorama for color support
-init(autoreset=True)
+# ANSI colors
+RED = "\033[31m"
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
+CYAN = "\033[36m"
+RESET = "\033[0m"
 
 def main():
-    # Prompt user for F5 login
     f5_host = input("Enter F5 hostname or IP: ")
     f5_user = input("Enter F5 username: ")
     f5_pass = getpass.getpass("Enter F5 password: ")
 
-    # Set up SSH connection
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
-    print(Fore.YELLOW + f"Connecting to {f5_host}...")
+    print(GREEN + f"Connecting to {f5_host}..." + RESET)
 
     try:
         ssh.connect(f5_host, username=f5_user, password=f5_pass)
-        print(Fore.GREEN + "Connected successfully.")
+        print(GREEN + "Connected successfully." + RESET)
 
         # Run a test command
         command = "tmsh show sys version"
@@ -28,17 +29,17 @@ def main():
         error = stderr.read().decode()
 
         if output:
-            print(Fore.CYAN + "Command Output:")
+            print(CYAN + "Command Output:" + RESET)
             print(output.strip())
 
         if error:
-            print(Fore.RED + "Error Output:")
+            print(RED + "Error Output:" + RESET)
             print(error.strip())
 
         ssh.close()
 
     except Exception as e:
-        print(Fore.RED + f"SSH connection failed: {e}")
+        print(RED + f"SSH connection failed: {e}" + RESET)
 
 if __name__ == "__main__":
     main()
