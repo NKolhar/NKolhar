@@ -1,0 +1,135 @@
+import paramiko
+import getpass
+import time
+import os
+import subprocess
+import requests
+
+def upload_to_ihealth(qkview_path):
+    print("\n--- Upload to F5 iHealth ---")
+    ihealth_user = input("Enter iHealth username: ")
+    ihealth_pass = getpass.getpass("Enter iHealth password: ")
+    description = input("Enter qkview description: ")
+
+    login_url = "https://ihealth-api.f5.com/auth/login"
+    upload_url = "https://ihealth-api.f5.com/qkview-analyzer/api/qkviews"
+
+    session = requests.Session()
+
+    # Step 1: Authenticate
+    print("Authenticating to iHealth...")
+    login_payload = {
+        "username": ihealth_user,
+        "password": ihealth_pass
+    }
+
+    login_resp = session.post(login_url, json=login_payload)
+    if login_resp.status_code != 200 or 'token' not in login_resp.json():
+        print("❌ Login to iHealth failed:", login_resp.text)
+        return
+
+    token = login_resp.json()['token']
+    headers = {
+        "Authorization": f"Bearer {token}"
+    }
+
+    # Step 2: Upload the file
+    print("Uploading qkview file to iHealth...")
+    with open(qkview_path, 'rb') as file_data:
+        files = {
+            'file': (os.path.basename(qkview_path), file_data, 'application/octet-stream')
+        }
+        data = {
+            'description': description
+        }
+        response = session.post(upload_url, headers=headers, files=files, data=data)
+
+    if response.status_code == 200:
+        print("✅ Successfully uploaded qkview to iHealth.")
+        result = response.json()
+        print("QKView ID:", result.get("id", "N/A"))
+    else:
+        print("❌ Upload failed:", response.text)
+
+def main():
+    # --- Prompt for credentials and device info ---
+    f5_host = input("Enter F5 device IP or hostname: ")
+    f5_user = input("Enter F5 username: ")
+    f5_pass = getpass.getpass("Enter F5 password: ")
+
+    scp_user = input("Enter SCP (corelogic.lab.com) username: ")
+    scp_pass = getpass.getpass("Enter SCP password: ")
+    device_name = input("Enter device name (used in qkview filename): ")
+
+    # --- Create qkview filename ---
+    remote_file = f"/var/tmp/qkview.{device_name}.qkview"
+    local_file = f"qkview.{device_name}.qkview"
+
+    # --- SSH into F5 and run qkview ---
+    print("\nConnecting to F5 device...")
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh.connect(f5_host, username=f5_user, password=f5_pass)
+
+    shell = ssh.invoke_shell()
+    shell.send("bash\n")
+    time.sleep(1)
+    shell.recv(1000)
+
+    print(f"Running qkview for device: {device_name}...")
+    shell.send(f"qkview -s0 --file {remote_file}\n")
+    time.sleep(5)
+
+    # Wait for file to appear
+    print("Waiting for qkview file to finish generating...")
+    sftp = ssh.open_sftp()
+    max_wait = 600
+    waited = 0
+    while waited < max_wait:
+        try:
+            sftp.stat(remote_file)
+            print(f"✅ qkview file created: {remote_file}")
+            break
+        except FileNotFoundError:
+            time.sleep(15)
+            waited += 15
+            print("Still waiting...")
+
+    if waited >= max_wait:
+        print("❌ Timeout waiting for qkview file.")
+        ssh.close()
+        return
+
+    # --- Download qkview file to local machine ---
+    print(f"Downloading {remote_file} to local machine...")
+    sftp.get(remote_file, local_file)
+    sftp.close()
+    ssh.close()
+
+    # --- SCP to remote server ---
+    print(f"Uploading qkview to corelogic.lab.com:/storage/qkview/ ...")
+    os.environ["SSHPASS"] = scp_pass
+    scp_cmd = [
+        "sshpass", "-e", "scp",
+        local_file,
+        f"{scp_user}@corelogic.lab.com:/storage/qkview/"
+    ]
+    result = subprocess.run(scp_cmd)
+
+    if result.returncode == 0:
+        print("✅ qkview file transferred to corelogic.lab.com.")
+    else:
+        print("❌ Failed to transfer file to corelogic.lab.com.")
+
+    # --- Upload to iHealth ---
+    upload_to_ihealth(local_file)
+
+    # --- Cleanup ---
+    try:
+        os.remove(local_file)
+        print("🧹 Local temporary file deleted.")
+    except Exception as e:
+        print(f"⚠️ Failed to delete local file: {e}")
+
+if __name__ == "__main__":
+    main()
