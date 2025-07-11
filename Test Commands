@@ -1,0 +1,1 @@
+while true; do echo -n "$(date +'%F %T') - "; code=$(curl -s -o /tmp/curl_body.txt -w "%{http_code}" http://1.1.1.1:4000/healthcheck.jsp); body=$(cat /tmp/curl_body.txt); echo "Status: $code | Response: $body"; sleep 2; done
